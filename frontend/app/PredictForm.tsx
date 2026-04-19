@@ -1,75 +1,106 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { callPredict, type SpaceResponse, SPACE_BASE_URL } from "@/lib/gradio";
 
-type PredictRequest = {
+type SavedRun = {
+  id: string; // timestamp-based, for localStorage key
   tickers: string[];
   samples: number;
   pred_len: number;
   lookback: number;
   seed: number | null;
   generated_at: string;
+  report: SpaceResponse;
 };
 
-const STORAGE_KEY = "kronos:lastRequest";
+const HISTORY_KEY = "kronos:runs";
+const MAX_HISTORY = 20;
 
-function buildCommand(req: PredictRequest): string {
-  const parts = [
-    "python main.py",
-    `--tickers ${req.tickers.join(",")}`,
-    `--lookback ${req.lookback}`,
-    `--pred_len ${req.pred_len}`,
-    `--samples ${req.samples}`,
-  ];
-  if (req.seed !== null) parts.push(`--seed ${req.seed}`);
-  return parts.join(" ");
+function loadHistory(): SavedRun[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
 }
 
-export function PredictForm() {
+function saveRun(run: SavedRun) {
+  const all = loadHistory();
+  all.unshift(run);
+  const trimmed = all.slice(0, MAX_HISTORY);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+}
+
+export interface PredictFormProps {
+  onResult?: (report: SpaceResponse) => void;
+}
+
+export function PredictForm({ onResult }: PredictFormProps) {
   const [tickersRaw, setTickersRaw] = useState("MSFT, NVDA, AAPL");
   const [samples, setSamples] = useState(30);
   const [predLen, setPredLen] = useState(30);
   const [lookback, setLookback] = useState(400);
   const [seed, setSeed] = useState<number | null>(42);
-  const [command, setCommand] = useState<string | null>(null);
-  const [lastRun, setLastRun] = useState<PredictRequest | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [stage, setStage] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
 
+  // tick elapsed time while loading
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setLastRun(JSON.parse(raw));
-    } catch {}
-  }, []);
+    if (!loading) return;
+    const start = Date.now();
+    const timer = setInterval(() => setElapsedMs(Date.now() - start), 200);
+    return () => clearInterval(timer);
+  }, [loading]);
 
-  const handleGenerate = () => {
+  const handleRun = async () => {
+    setError(null);
     const tickers = tickersRaw
       .split(/[,\s\n]+/)
       .map((t) => t.trim().toUpperCase())
       .filter(Boolean);
-    if (tickers.length === 0) return;
+    if (tickers.length === 0) {
+      setError("Please enter at least one ticker.");
+      return;
+    }
+    if (tickers.length > 30) {
+      setError("Max 30 tickers per request.");
+      return;
+    }
 
-    const req: PredictRequest = {
-      tickers,
-      samples,
-      pred_len: predLen,
-      lookback,
-      seed,
-      generated_at: new Date().toISOString(),
-    };
-    const cmd = buildCommand(req);
-    setCommand(cmd);
-    setLastRun(req);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(req));
-  };
+    setLoading(true);
+    setStage("Submitting request...");
+    setElapsedMs(0);
 
-  const handleCopy = async () => {
-    if (!command) return;
     try {
-      await navigator.clipboard.writeText(command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {}
+      const report = await callPredict(
+        { tickers, lookback, pred_len: predLen, samples, seed },
+        (s) => setStage(s),
+      );
+      const run: SavedRun = {
+        id: report.generated_at,
+        tickers,
+        samples,
+        pred_len: predLen,
+        lookback,
+        seed,
+        generated_at: report.generated_at,
+        report,
+      };
+      saveRun(run);
+      onResult?.(report);
+      setStage("Done ✓");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      setStage("");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -79,8 +110,8 @@ export function PredictForm() {
           <span className="gradient-text">Run a prediction</span>
         </h1>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Enter tickers, generate the CLI command, run it locally. Results appear below after{" "}
-          <code className="mono" style={{ color: "var(--accent)" }}>git push</code>.
+          Enter tickers, click <b>Predict</b>, and Kronos will run remotely on HuggingFace Space.
+          Each run is saved to your browser history with a timestamp.
         </p>
       </div>
 
@@ -92,14 +123,15 @@ export function PredictForm() {
           className="block text-xs mb-2 mono uppercase tracking-wider"
           style={{ color: "var(--text-muted)" }}
         >
-          Tickers (comma or newline separated)
+          Tickers (comma or newline separated, max 30)
         </label>
         <textarea
           value={tickersRaw}
           onChange={(e) => setTickersRaw(e.target.value)}
           rows={3}
           placeholder="MSFT, NVDA, AAPL"
-          className="w-full px-4 py-3 rounded-lg outline-none mono text-sm transition-colors focus:ring-1"
+          disabled={loading}
+          className="w-full px-4 py-3 rounded-lg outline-none mono text-sm transition-colors focus:ring-1 disabled:opacity-60"
           style={{
             background: "var(--bg-input)",
             border: "1px solid var(--border)",
@@ -116,9 +148,9 @@ export function PredictForm() {
               type="number"
               value={lookback}
               onChange={(e) => setLookback(Math.max(50, Math.min(512, Number(e.target.value))))}
-              min={50}
-              max={512}
-              className="w-full px-3 py-2 rounded-lg outline-none mono text-sm"
+              min={50} max={512}
+              disabled={loading}
+              className="w-full px-3 py-2 rounded-lg outline-none mono text-sm disabled:opacity-60"
               style={{ background: "var(--bg-input)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
             />
           </div>
@@ -130,9 +162,9 @@ export function PredictForm() {
               type="number"
               value={predLen}
               onChange={(e) => setPredLen(Math.max(1, Math.min(120, Number(e.target.value))))}
-              min={1}
-              max={120}
-              className="w-full px-3 py-2 rounded-lg outline-none mono text-sm"
+              min={1} max={120}
+              disabled={loading}
+              className="w-full px-3 py-2 rounded-lg outline-none mono text-sm disabled:opacity-60"
               style={{ background: "var(--bg-input)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
             />
           </div>
@@ -143,10 +175,10 @@ export function PredictForm() {
             <input
               type="number"
               value={samples}
-              onChange={(e) => setSamples(Math.max(5, Math.min(100, Number(e.target.value))))}
-              min={5}
-              max={100}
-              className="w-full px-3 py-2 rounded-lg outline-none mono text-sm"
+              onChange={(e) => setSamples(Math.max(5, Math.min(60, Number(e.target.value))))}
+              min={5} max={60}
+              disabled={loading}
+              className="w-full px-3 py-2 rounded-lg outline-none mono text-sm disabled:opacity-60"
               style={{ background: "var(--bg-input)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
             />
           </div>
@@ -162,87 +194,92 @@ export function PredictForm() {
                 if (v === "") setSeed(null);
                 else if (/^\d+$/.test(v)) setSeed(Number(v));
               }}
+              disabled={loading}
               placeholder="random"
-              className="w-full px-3 py-2 rounded-lg outline-none mono text-sm"
+              className="w-full px-3 py-2 rounded-lg outline-none mono text-sm disabled:opacity-60"
               style={{ background: "var(--bg-input)", border: "1px solid var(--border)", color: "var(--text-primary)" }}
             />
           </div>
         </div>
 
-        <button
-          onClick={handleGenerate}
-          className="mt-5 px-6 py-2.5 rounded-lg font-semibold text-sm transition-all cursor-pointer hover:opacity-90"
-          style={{
-            background: "linear-gradient(135deg, var(--accent) 0%, var(--accent-alt) 100%)",
-            color: "#0a0e1a",
-          }}
-        >
-          Generate command →
-        </button>
+        <div className="mt-5 flex items-center gap-4 flex-wrap">
+          <button
+            onClick={handleRun}
+            disabled={loading}
+            className="px-6 py-2.5 rounded-lg font-semibold text-sm transition-all cursor-pointer hover:opacity-90 disabled:opacity-60 disabled:cursor-wait"
+            style={{
+              background: "linear-gradient(135deg, var(--accent) 0%, var(--accent-alt) 100%)",
+              color: "#0a0e1a",
+            }}
+          >
+            {loading ? (
+              <span className="inline-flex items-center gap-2">
+                <span
+                  className="inline-block w-3 h-3 rounded-full animate-pulse"
+                  style={{ background: "#0a0e1a" }}
+                />
+                Running...
+              </span>
+            ) : (
+              "🚀 Predict"
+            )}
+          </button>
+          {loading && (
+            <div className="text-sm flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
+              <span>{stage}</span>
+              <span className="mono text-xs" style={{ color: "var(--text-muted)" }}>
+                ({(elapsedMs / 1000).toFixed(1)}s)
+              </span>
+            </div>
+          )}
+          {!loading && stage === "Done ✓" && (
+            <span className="text-sm" style={{ color: "var(--green)" }}>
+              ✓ Done — results below
+            </span>
+          )}
+        </div>
+
+        {error && (
+          <div
+            className="mt-4 p-3 rounded-lg text-sm"
+            style={{
+              background: "rgba(255, 107, 122, 0.1)",
+              border: "1px solid rgba(255, 107, 122, 0.3)",
+              color: "var(--red)",
+            }}
+          >
+            <b>Error:</b> {error}
+            <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+              If the Space is in cold start, first request can take ~45s while the model loads.
+              Retry usually works. Also check{" "}
+              <a
+                href={SPACE_BASE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: "var(--accent)" }}
+                className="underline"
+              >
+                the Space status
+              </a>
+              .
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Generated command output */}
-      {command && (
-        <div
-          className="rounded-xl p-5 mb-4"
-          style={{
-            background: "var(--bg-input)",
-            border: "1px solid var(--accent-dim)",
-            boxShadow: "0 0 0 1px var(--accent-dim)",
-          }}
+      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+        Powered by{" "}
+        <a
+          href={SPACE_BASE_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline"
+          style={{ color: "var(--accent)" }}
         >
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs mono uppercase tracking-wider" style={{ color: "var(--accent)" }}>
-              Step 1 · Copy & run this command
-            </div>
-            <button
-              onClick={handleCopy}
-              className="text-xs px-3 py-1 rounded mono cursor-pointer"
-              style={{
-                background: copied ? "var(--green)" : "var(--accent-dim)",
-                color: copied ? "#0a0e1a" : "var(--accent)",
-              }}
-            >
-              {copied ? "✓ Copied" : "Copy"}
-            </button>
-          </div>
-          <pre
-            className="mono text-sm overflow-x-auto whitespace-pre-wrap break-all"
-            style={{ color: "var(--text-primary)" }}
-          >
-            <span style={{ color: "var(--text-muted)" }}>{"$ "}</span>
-            {command}
-          </pre>
-          <div
-            className="mt-4 pt-4 text-xs leading-relaxed"
-            style={{ borderTop: "1px dashed var(--border)", color: "var(--text-secondary)" }}
-          >
-            <div className="mb-1.5">
-              <b style={{ color: "var(--accent-alt)" }}>Step 2 ·</b>{" "}
-              Run{" "}
-              <code className="mono" style={{ color: "var(--accent)" }}>
-                python export_to_hub.py
-              </code>{" "}
-              to bridge to insights-hub (optional)
-            </div>
-            <div>
-              <b style={{ color: "var(--accent-alt)" }}>Step 3 ·</b>{" "}
-              <code className="mono" style={{ color: "var(--accent)" }}>
-                git add results/ && git commit -m &quot;...&quot; && git push
-              </code>{" "}
-              — Vercel will auto-rebuild and your results will appear below within 2 min.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {lastRun && !command && (
-        <div className="mb-4 text-xs" style={{ color: "var(--text-muted)" }}>
-          Last request (local): {new Date(lastRun.generated_at).toLocaleString()} ·{" "}
-          {lastRun.tickers.length} tickers ({lastRun.tickers.slice(0, 5).join(", ")}
-          {lastRun.tickers.length > 5 ? "…" : ""})
-        </div>
-      )}
+          Kurtobe/kronos-filter
+        </a>{" "}
+        on HuggingFace Spaces · Free CPU tier · Cold starts add ~30s to first request.
+      </div>
     </section>
   );
 }
