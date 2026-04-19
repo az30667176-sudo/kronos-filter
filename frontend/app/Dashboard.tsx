@@ -18,8 +18,8 @@ import type { ProbabilityReport, TickerMetrics } from "@/types";
 
 function pctColor(pct: number): string {
   if (pct > 0.05) return "var(--green)";
-  if (pct > 0) return "#8abf7a";
-  if (pct > -0.05) return "#bfa78a";
+  if (pct > 0) return "#86d4a8";
+  if (pct > -0.05) return "#d4a86b";
   return "var(--red)";
 }
 
@@ -31,9 +31,9 @@ function formatPct(v: number, sign = false, digits = 1): string {
 
 function ConfidenceBadge({ label }: { label: string }) {
   const map: Record<string, { bg: string; color: string; icon: string }> = {
-    高: { bg: "#1a3324", color: "var(--green)", icon: "🟢" },
-    中: { bg: "#3a2a10", color: "var(--amber)", icon: "🟡" },
-    低: { bg: "#3a1a1a", color: "var(--red)", icon: "🔴" },
+    高: { bg: "rgba(61, 220, 151, 0.12)", color: "var(--green)", icon: "●" },
+    中: { bg: "rgba(255, 184, 77, 0.12)", color: "var(--amber)", icon: "●" },
+    低: { bg: "rgba(255, 107, 122, 0.12)", color: "var(--red)", icon: "●" },
   };
   const style = map[label] ?? { bg: "var(--border)", color: "var(--text-secondary)", icon: "⚪" };
   return (
@@ -49,11 +49,11 @@ function ConfidenceBadge({ label }: { label: string }) {
 
 function SignalBadge({ category }: { category: string }) {
   const map: Record<string, { bg: string; color: string }> = {
-    "Strong Bullish": { bg: "#0f3a1a", color: "#7dd895" },
-    Bullish: { bg: "#1a3324", color: "var(--green)" },
-    Neutral: { bg: "#2a2a2a", color: "var(--text-secondary)" },
-    Bearish: { bg: "#3a1a1a", color: "var(--red)" },
-    "Strong Bearish": { bg: "#5a1515", color: "#ff9999" },
+    "Strong Bullish": { bg: "rgba(61, 220, 151, 0.18)", color: "#7dffb8" },
+    Bullish: { bg: "rgba(61, 220, 151, 0.1)", color: "var(--green)" },
+    Neutral: { bg: "var(--border)", color: "var(--text-secondary)" },
+    Bearish: { bg: "rgba(255, 107, 122, 0.1)", color: "var(--red)" },
+    "Strong Bearish": { bg: "rgba(255, 107, 122, 0.18)", color: "#ff9aa6" },
   };
   const style = map[category] ?? { bg: "var(--border)", color: "var(--text-secondary)" };
   return (
@@ -150,26 +150,63 @@ export function Dashboard({ report }: { report: ProbabilityReport }) {
 
   return (
     <div>
-      {/* Report meta */}
-      <div className="mb-6 flex flex-wrap gap-6 text-sm" style={{ color: "var(--text-muted)" }}>
-        <span>
-          Generated: <span style={{ color: "var(--text-secondary)" }}>{report.generated_at.slice(0, 16).replace("T", " ")}</span>
-        </span>
-        <span>
-          Data date: <span style={{ color: "var(--text-secondary)" }}>{report.data_last_date?.slice(0, 10) ?? "—"}</span>
-        </span>
-        <span>
-          Model: <span style={{ color: "var(--text-secondary)" }}>Kronos-{report.config.model_size}</span>
-        </span>
-        <span>
-          Lookback/Pred/Samples:{" "}
-          <span style={{ color: "var(--text-secondary)" }}>
-            {report.config.lookback} / {report.config.pred_len} / {report.config.samples}
+      {/* Prominent latest-result header */}
+      <div
+        className="rounded-xl p-5 mb-6 flex flex-wrap items-center justify-between gap-4"
+        style={{
+          background: "linear-gradient(135deg, var(--bg-card) 0%, var(--bg-elevated) 100%)",
+          border: "1px solid var(--accent-dim)",
+        }}
+      >
+        <div>
+          <div
+            className="text-xs mono uppercase tracking-wider mb-1"
+            style={{ color: "var(--accent)" }}
+          >
+            Latest prediction
+          </div>
+          <div className="flex items-baseline gap-3 flex-wrap">
+            <span className="text-2xl font-bold mono" style={{ color: "var(--text-primary)" }}>
+              {report.generated_at.slice(0, 10)}
+            </span>
+            <span className="text-sm mono" style={{ color: "var(--text-muted)" }}>
+              {report.generated_at.slice(11, 16)} UTC
+            </span>
+          </div>
+          <div className="text-xs mt-1" style={{ color: "var(--text-secondary)" }}>
+            Data as of{" "}
+            <span className="mono" style={{ color: "var(--text-primary)" }}>
+              {report.data_last_date?.slice(0, 10) ?? "—"}
+            </span>{" "}
+            · {report.tickers.length} tickers
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <span
+            className="px-2.5 py-1 rounded text-xs mono"
+            style={{ background: "var(--bg-input)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+          >
+            Kronos-{report.config.model_size}
           </span>
-        </span>
-        <span>
-          Tickers: <span style={{ color: "var(--text-secondary)" }}>{report.tickers.length}</span>
-        </span>
+          <span
+            className="px-2.5 py-1 rounded text-xs mono"
+            style={{ background: "var(--bg-input)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+          >
+            lookback {report.config.lookback}
+          </span>
+          <span
+            className="px-2.5 py-1 rounded text-xs mono"
+            style={{ background: "var(--bg-input)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+          >
+            pred {report.config.pred_len}
+          </span>
+          <span
+            className="px-2.5 py-1 rounded text-xs mono"
+            style={{ background: "var(--bg-input)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+          >
+            samples {report.config.samples}
+          </span>
+        </div>
       </div>
 
       {/* Honest framing banner */}

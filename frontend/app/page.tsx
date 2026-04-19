@@ -1,25 +1,30 @@
 import { getLatestReport } from "@/lib/report";
+import { PredictForm } from "./PredictForm";
 import { Dashboard } from "./Dashboard";
 
 export default function Home() {
   const report = getLatestReport();
 
-  if (!report) {
-    return (
-      <div className="text-center py-24" style={{ color: "var(--text-muted)" }}>
-        <p
-          className="text-2xl mb-3 font-[family-name:var(--font-playfair)]"
-          style={{ color: "var(--text-secondary)" }}
+  return (
+    <div>
+      <PredictForm />
+      {report ? (
+        <Dashboard report={report} />
+      ) : (
+        <div
+          className="text-center py-20 rounded-xl"
+          style={{
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            color: "var(--text-muted)",
+          }}
         >
-          No analysis yet
-        </p>
-        <p className="text-base leading-relaxed">
-          Run <code style={{ color: "var(--accent)" }}>python main.py --tickers AAPL,MSFT,NVDA</code> to
-          generate your first probability report.
-        </p>
-      </div>
-    );
-  }
-
-  return <Dashboard report={report} />;
+          <p className="text-xl mb-2" style={{ color: "var(--text-secondary)" }}>
+            No prediction yet
+          </p>
+          <p className="text-sm">Run the command above to generate your first report.</p>
+        </div>
+      )}
+    </div>
+  );
 }

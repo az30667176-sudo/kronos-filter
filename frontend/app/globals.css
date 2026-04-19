@@ -1,26 +1,34 @@
 @import "tailwindcss";
 
 :root {
-  --bg: #0c0c0c;
-  --bg-card: #1a1a1a;
-  --bg-elevated: #222222;
-  --text-primary: #e8e8e8;
-  --text-secondary: #a0a0a0;
-  --text-muted: #5a5a5a;
-  --border: #2a2a2a;
-  --border-hover: #3a3a3a;
-  --accent: #c9a55a;
-  --accent-dim: #c9a55a22;
-  --green: #5bbf7a;
-  --amber: #d4a44e;
-  --red: #d46b6b;
-  --blue: #5bb8d4;
-  --purple: #a78bda;
+  /* Electric Tech theme — distinct from Kurt Library's gold/dark */
+  --bg: #0a0e1a;
+  --bg-card: #151b2e;
+  --bg-elevated: #1e2540;
+  --bg-input: #0f1422;
+  --text-primary: #e8edf7;
+  --text-secondary: #98a4bc;
+  --text-muted: #586480;
+  --border: #1f2841;
+  --border-hover: #2d3a5a;
+  /* Primary accent: electric cyan */
+  --accent: #00d9ff;
+  --accent-dim: #00d9ff22;
+  --accent-glow: #00d9ff55;
+  /* Secondary: electric magenta for contrast */
+  --accent-alt: #ff4da3;
+  /* Semantic colors */
+  --green: #3ddc97;
+  --amber: #ffb84d;
+  --red: #ff6b7a;
+  --blue: #5b9dff;
+  --purple: #b084ff;
 }
 
 @theme inline {
   --color-bg: var(--bg);
   --color-bg-card: var(--bg-card);
+  --color-bg-elevated: var(--bg-elevated);
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-text-muted: var(--text-muted);
@@ -43,9 +51,49 @@ body {
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Subtle grid pattern in background */
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(0, 217, 255, 0.04) 0%, transparent 70%),
+    linear-gradient(rgba(31, 40, 65, 0.3) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31, 40, 65, 0.3) 1px, transparent 1px);
+  background-size: auto, 40px 40px, 40px 40px;
+  background-position: 0 0, -1px -1px, -1px -1px;
 }
 
 ::selection {
   background: var(--accent-dim);
   color: var(--accent);
+}
+
+/* Code / monospace helper */
+.mono {
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-feature-settings: "calt" 0;
+}
+
+/* Glow effect for accents */
+.glow {
+  box-shadow: 0 0 20px var(--accent-glow), 0 0 40px var(--accent-dim);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-alt) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Probability bar (used in tables) */
+.prob-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+.prob-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-alt) 100%);
+  transition: width 0.3s ease;
 }
