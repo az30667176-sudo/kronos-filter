@@ -66,6 +66,13 @@ export default function RootLayout({
                 History
               </Link>
               <Link
+                href="/backtest"
+                className="text-sm font-medium transition-colors hover:opacity-100"
+                style={{ color: "var(--text-secondary)" }}
+              >
+                Backtest
+              </Link>
+              <Link
                 href="/about"
                 className="text-sm font-medium transition-colors hover:opacity-100"
                 style={{ color: "var(--text-secondary)" }}

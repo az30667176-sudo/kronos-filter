@@ -11,35 +11,46 @@ export interface HomeClientProps {
 
 export function HomeClient({ initialReport }: HomeClientProps) {
   const [liveReport, setLiveReport] = useState<ProbabilityReport | null>(null);
+  const [resultSource, setResultSource] = useState<"live" | "cache" | "supabase" | null>(null);
 
-  // liveReport (from just-completed Space run) takes priority over initialReport (from git-committed latest.json)
   const displayReport = liveReport ?? initialReport;
 
   return (
     <div>
       <PredictForm
-        onResult={(report) => {
-          // Gradio's JSON output matches ProbabilityReport shape
+        onResult={(report, source) => {
           setLiveReport(report as unknown as ProbabilityReport);
+          setResultSource(source);
         }}
       />
 
       {displayReport ? (
         <>
-          {liveReport && (
+          {liveReport && resultSource && (
             <div
               className="mb-4 p-3 rounded-lg text-sm flex items-center gap-2"
               style={{
-                background: "rgba(61, 220, 151, 0.08)",
-                border: "1px solid rgba(61, 220, 151, 0.3)",
-                color: "var(--green)",
+                background:
+                  resultSource === "live"
+                    ? "rgba(61, 220, 151, 0.08)"
+                    : "rgba(0, 217, 255, 0.08)",
+                border: `1px solid ${
+                  resultSource === "live"
+                    ? "rgba(61, 220, 151, 0.3)"
+                    : "rgba(0, 217, 255, 0.3)"
+                }`,
+                color: resultSource === "live" ? "var(--green)" : "var(--accent)",
               }}
             >
               <span
                 className="inline-block w-2 h-2 rounded-full"
-                style={{ background: "var(--green)" }}
+                style={{ background: resultSource === "live" ? "var(--green)" : "var(--accent)" }}
               />
-              <span>Live result from the run you just triggered (saved to browser history).</span>
+              <span>
+                {resultSource === "live" && "Live result from your run (saved to database)."}
+                {resultSource === "cache" && "⚡ Instantly served from local cache (identical request within 5 min)."}
+                {resultSource === "supabase" && "⚡ Served from Supabase cache (identical request run recently)."}
+              </span>
             </div>
           )}
           <Dashboard report={displayReport} />

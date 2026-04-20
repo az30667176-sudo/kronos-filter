@@ -1,55 +1,145 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { callPredict, type SpaceResponse, SPACE_BASE_URL } from "@/lib/gradio";
+import {
+  buildFingerprint,
+  findRecentRunByFingerprint,
+  saveRun,
+  getSupabase,
+} from "@/lib/supabase";
 
-type SavedRun = {
-  id: string; // timestamp-based, for localStorage key
+type PredictRequest = {
   tickers: string[];
-  samples: number;
-  pred_len: number;
   lookback: number;
+  pred_len: number;
+  samples: number;
   seed: number | null;
-  generated_at: string;
+};
+
+// Cross-tab lock: in localStorage, cleared on completion. Includes timestamp so a stale
+// lock (e.g. user closed tab mid-run) is auto-ignored after 10 minutes.
+const LOCK_KEY = "kronos:running_lock";
+const LOCK_STALE_MS = 10 * 60 * 1000;
+
+type RunningLock = {
+  fingerprint: string;
+  started_at: string; // ISO
+  tab_id: string;
+};
+
+function readLock(): RunningLock | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LOCK_KEY);
+    if (!raw) return null;
+    const lock = JSON.parse(raw) as RunningLock;
+    const age = Date.now() - new Date(lock.started_at).getTime();
+    if (age > LOCK_STALE_MS) {
+      localStorage.removeItem(LOCK_KEY);
+      return null;
+    }
+    return lock;
+  } catch {
+    return null;
+  }
+}
+
+function writeLock(lock: RunningLock) {
+  localStorage.setItem(LOCK_KEY, JSON.stringify(lock));
+}
+
+function clearLock() {
+  localStorage.removeItem(LOCK_KEY);
+}
+
+// Lightweight result cache: identical fingerprint within CACHE_MS returns cached result instantly.
+// Supabase also covers this but local cache is faster and avoids a round-trip.
+const CACHE_KEY = "kronos:result_cache";
+const CACHE_MS = 5 * 60 * 1000;
+
+type CachedResult = {
+  fingerprint: string;
+  completed_at: string;
   report: SpaceResponse;
 };
 
-const HISTORY_KEY = "kronos:runs";
-const MAX_HISTORY = 20;
-
-function loadHistory(): SavedRun[] {
+function readCache(): CachedResult[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(HISTORY_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw) as CachedResult[];
   } catch {
     return [];
   }
 }
 
-function saveRun(run: SavedRun) {
-  const all = loadHistory();
-  all.unshift(run);
-  const trimmed = all.slice(0, MAX_HISTORY);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+function writeCache(entry: CachedResult) {
+  const items = readCache();
+  items.unshift(entry);
+  // Keep last 15 cached results
+  const trimmed = items.slice(0, 15);
+  localStorage.setItem(CACHE_KEY, JSON.stringify(trimmed));
+}
+
+function findInCache(fingerprint: string): CachedResult | null {
+  const items = readCache();
+  for (const it of items) {
+    if (it.fingerprint !== fingerprint) continue;
+    const age = Date.now() - new Date(it.completed_at).getTime();
+    if (age <= CACHE_MS) return it;
+  }
+  return null;
+}
+
+function randomId(): string {
+  return Math.random().toString(36).slice(2, 10);
 }
 
 export interface PredictFormProps {
-  onResult?: (report: SpaceResponse) => void;
+  onResult?: (report: SpaceResponse, source: "live" | "cache" | "supabase") => void;
 }
 
 export function PredictForm({ onResult }: PredictFormProps) {
   const [tickersRaw, setTickersRaw] = useState("MSFT, NVDA, AAPL");
-  const [samples, setSamples] = useState(30);
-  const [predLen, setPredLen] = useState(30);
+  const [samples, setSamples] = useState(15);
+  const [predLen, setPredLen] = useState(20);
   const [lookback, setLookback] = useState(400);
   const [seed, setSeed] = useState<number | null>(42);
+
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [cacheHit, setCacheHit] = useState<null | "local" | "supabase">(null);
 
-  // tick elapsed time while loading
+  const [otherTabLock, setOtherTabLock] = useState<RunningLock | null>(null);
+  const tabId = useRef(randomId());
+
+  // Watch for cross-tab lock changes
+  useEffect(() => {
+    const checkLock = () => {
+      const lock = readLock();
+      if (lock && lock.tab_id !== tabId.current) {
+        setOtherTabLock(lock);
+      } else {
+        setOtherTabLock(null);
+      }
+    };
+    checkLock();
+    const interval = setInterval(checkLock, 2000);
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === LOCK_KEY) checkLock();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+
+  // Elapsed timer while loading
   useEffect(() => {
     if (!loading) return;
     const start = Date.now();
@@ -59,6 +149,8 @@ export function PredictForm({ onResult }: PredictFormProps) {
 
   const handleRun = async () => {
     setError(null);
+    setCacheHit(null);
+
     const tickers = tickersRaw
       .split(/[,\s\n]+/)
       .map((t) => t.trim().toUpperCase())
@@ -72,36 +164,77 @@ export function PredictForm({ onResult }: PredictFormProps) {
       return;
     }
 
+    const req: PredictRequest = { tickers, lookback, pred_len: predLen, samples, seed };
+    const fp = buildFingerprint(req);
+
+    // 1. Local cache dedup
+    const localHit = findInCache(fp);
+    if (localHit) {
+      setCacheHit("local");
+      setStage("⚡ Served from local cache");
+      onResult?.(localHit.report, "cache");
+      return;
+    }
+
+    // 2. Supabase dedup (cross-device)
     setLoading(true);
-    setStage("Submitting request...");
+    setStage("Checking recent runs...");
     setElapsedMs(0);
 
     try {
-      const report = await callPredict(
-        { tickers, lookback, pred_len: predLen, samples, seed },
-        (s) => setStage(s),
-      );
-      const run: SavedRun = {
-        id: report.generated_at,
-        tickers,
-        samples,
-        pred_len: predLen,
-        lookback,
-        seed,
-        generated_at: report.generated_at,
-        report,
-      };
-      saveRun(run);
-      onResult?.(report);
+      const supaHit = await findRecentRunByFingerprint(fp, 5);
+      if (supaHit) {
+        setCacheHit("supabase");
+        setStage("⚡ Served from Supabase cache");
+        writeCache({ fingerprint: fp, completed_at: supaHit.created_at, report: supaHit.report });
+        onResult?.(supaHit.report, "supabase");
+        setLoading(false);
+        return;
+      }
+
+      // 3. Cross-tab lock check
+      const existing = readLock();
+      if (existing && existing.tab_id !== tabId.current) {
+        const age = Math.floor((Date.now() - new Date(existing.started_at).getTime()) / 1000);
+        setError(
+          `Another tab is already running a prediction (${age}s ago). Wait or refresh that tab.`,
+        );
+        setLoading(false);
+        return;
+      }
+
+      writeLock({
+        fingerprint: fp,
+        started_at: new Date().toISOString(),
+        tab_id: tabId.current,
+      });
+
+      // 4. Call HF Space
+      setStage("Submitting to Kronos...");
+      const report = await callPredict(req, (s) => setStage(s));
+
+      // 5. Save to Supabase + local cache
+      setStage("Saving to database...");
+      try {
+        await saveRun(report, tickers, fp);
+      } catch (e) {
+        console.warn("saveRun failed, result still displayed:", e);
+      }
+      writeCache({ fingerprint: fp, completed_at: new Date().toISOString(), report });
+
+      onResult?.(report, "live");
       setStage("Done ✓");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       setStage("");
     } finally {
+      clearLock();
       setLoading(false);
     }
   };
+
+  const supabaseAvailable = !!getSupabase();
 
   return (
     <section className="mb-10">
@@ -110,10 +243,32 @@ export function PredictForm({ onResult }: PredictFormProps) {
           <span className="gradient-text">Run a prediction</span>
         </h1>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Enter tickers, click <b>Predict</b>, and Kronos will run remotely on HuggingFace Space.
-          Each run is saved to your browser history with a timestamp.
+          Enter tickers, click <b>Predict</b>. Kronos runs on ZeroGPU. Every run is saved
+          with a timestamp and fingerprinted so identical requests within 5 minutes return
+          instantly from cache.
         </p>
       </div>
+
+      {otherTabLock && (
+        <div
+          className="mb-4 p-3 rounded-lg text-sm flex items-center gap-2"
+          style={{
+            background: "rgba(255, 184, 77, 0.1)",
+            border: "1px solid rgba(255, 184, 77, 0.3)",
+            color: "var(--amber)",
+          }}
+        >
+          <span
+            className="inline-block w-2 h-2 rounded-full animate-pulse"
+            style={{ background: "var(--amber)" }}
+          />
+          <span>
+            Another browser tab is running a prediction
+            ({Math.floor((Date.now() - new Date(otherTabLock.started_at).getTime()) / 1000)}s ago).
+            Wait for it to finish or refresh that tab.
+          </span>
+        </div>
+      )}
 
       <div
         className="rounded-xl p-6 mb-4"
@@ -205,8 +360,8 @@ export function PredictForm({ onResult }: PredictFormProps) {
         <div className="mt-5 flex items-center gap-4 flex-wrap">
           <button
             onClick={handleRun}
-            disabled={loading}
-            className="px-6 py-2.5 rounded-lg font-semibold text-sm transition-all cursor-pointer hover:opacity-90 disabled:opacity-60 disabled:cursor-wait"
+            disabled={loading || !!otherTabLock}
+            className="px-6 py-2.5 rounded-lg font-semibold text-sm transition-all cursor-pointer hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed"
             style={{
               background: "linear-gradient(135deg, var(--accent) 0%, var(--accent-alt) 100%)",
               color: "#0a0e1a",
@@ -224,17 +379,19 @@ export function PredictForm({ onResult }: PredictFormProps) {
               "🚀 Predict"
             )}
           </button>
-          {loading && (
+          {(loading || cacheHit) && (
             <div className="text-sm flex items-center gap-2" style={{ color: "var(--text-secondary)" }}>
               <span>{stage}</span>
-              <span className="mono text-xs" style={{ color: "var(--text-muted)" }}>
-                ({(elapsedMs / 1000).toFixed(1)}s)
-              </span>
+              {loading && (
+                <span className="mono text-xs" style={{ color: "var(--text-muted)" }}>
+                  ({(elapsedMs / 1000).toFixed(1)}s)
+                </span>
+              )}
             </div>
           )}
           {!loading && stage === "Done ✓" && (
             <span className="text-sm" style={{ color: "var(--green)" }}>
-              ✓ Done — results below
+              ✓ Saved to database — see Dashboard / History
             </span>
           )}
         </div>
@@ -250,8 +407,7 @@ export function PredictForm({ onResult }: PredictFormProps) {
           >
             <b>Error:</b> {error}
             <div className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-              If the Space is in cold start, first request can take ~45s while the model loads.
-              Retry usually works. Also check{" "}
+              First request after Space sleep takes ~30s. Retry usually works. Check{" "}
               <a
                 href={SPACE_BASE_URL}
                 target="_blank"
@@ -259,7 +415,7 @@ export function PredictForm({ onResult }: PredictFormProps) {
                 style={{ color: "var(--accent)" }}
                 className="underline"
               >
-                the Space status
+                Space status
               </a>
               .
             </div>
@@ -267,18 +423,27 @@ export function PredictForm({ onResult }: PredictFormProps) {
         )}
       </div>
 
-      <div className="text-xs" style={{ color: "var(--text-muted)" }}>
-        Powered by{" "}
-        <a
-          href={SPACE_BASE_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="underline"
-          style={{ color: "var(--accent)" }}
-        >
-          Kurtobe/kronos-filter
-        </a>{" "}
-        on HuggingFace Spaces · Free CPU tier · Cold starts add ~30s to first request.
+      <div className="flex items-center justify-between text-xs" style={{ color: "var(--text-muted)" }}>
+        <div>
+          Powered by{" "}
+          <a
+            href={SPACE_BASE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+            style={{ color: "var(--accent)" }}
+          >
+            Kurtobe/kronos-filter
+          </a>{" "}
+          on HuggingFace ZeroGPU
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-block w-1.5 h-1.5 rounded-full"
+            style={{ background: supabaseAvailable ? "var(--green)" : "var(--red)" }}
+          />
+          <span>{supabaseAvailable ? "Supabase connected" : "Supabase offline"}</span>
+        </div>
       </div>
     </section>
   );
