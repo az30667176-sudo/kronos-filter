@@ -102,9 +102,9 @@ export interface PredictFormProps {
 }
 
 export function PredictForm({ onResult }: PredictFormProps) {
-  const [tickersRaw, setTickersRaw] = useState("MSFT, NVDA, AAPL");
-  const [samples, setSamples] = useState(15);
-  const [predLen, setPredLen] = useState(20);
+  const [tickersRaw, setTickersRaw] = useState("MSFT, NVDA");
+  const [samples, setSamples] = useState(10);
+  const [predLen, setPredLen] = useState(15);
   const [lookback, setLookback] = useState(400);
   const [seed, setSeed] = useState<number | null>(42);
 
@@ -236,6 +236,16 @@ export function PredictForm({ onResult }: PredictFormProps) {
 
   const supabaseAvailable = !!getSupabase();
 
+  // Estimate workload & warn when it's too heavy for HF Space CPU tier
+  // Rough formula: tickerCount × samples × pred_len / 30 ≈ seconds on CPU
+  const tickerCount = tickersRaw
+    .split(/[,\s\n]+/)
+    .map((t) => t.trim())
+    .filter(Boolean).length;
+  const estimatedSeconds = Math.round((tickerCount * samples * predLen) / 3);
+  const isHeavy = estimatedSeconds > 300; // >5 min
+  const isMedium = estimatedSeconds > 120 && !isHeavy;
+
   return (
     <section className="mb-10">
       <div className="mb-6">
@@ -243,8 +253,8 @@ export function PredictForm({ onResult }: PredictFormProps) {
           <span className="gradient-text">Run a prediction</span>
         </h1>
         <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
-          Enter tickers, click <b>Predict</b>. Kronos runs on ZeroGPU. Every run is saved
-          with a timestamp and fingerprinted so identical requests within 5 minutes return
+          Enter tickers, click <b>Predict</b>. Kronos runs on HF Space CPU (free tier). Every run
+          is saved with a timestamp and fingerprinted so identical requests within 5 minutes return
           instantly from cache.
         </p>
       </div>
@@ -266,6 +276,54 @@ export function PredictForm({ onResult }: PredictFormProps) {
             Another browser tab is running a prediction
             ({Math.floor((Date.now() - new Date(otherTabLock.started_at).getTime()) / 1000)}s ago).
             Wait for it to finish or refresh that tab.
+          </span>
+        </div>
+      )}
+
+      {/* Workload estimator */}
+      {tickerCount > 0 && (
+        <div
+          className="mb-4 p-3 rounded-lg text-xs flex items-start gap-2"
+          style={{
+            background: isHeavy
+              ? "rgba(255, 107, 122, 0.08)"
+              : isMedium
+                ? "rgba(255, 184, 77, 0.08)"
+                : "rgba(61, 220, 151, 0.06)",
+            border: `1px solid ${
+              isHeavy
+                ? "rgba(255, 107, 122, 0.3)"
+                : isMedium
+                  ? "rgba(255, 184, 77, 0.3)"
+                  : "rgba(61, 220, 151, 0.25)"
+            }`,
+            color: isHeavy
+              ? "var(--red)"
+              : isMedium
+                ? "var(--amber)"
+                : "var(--green)",
+          }}
+        >
+          <span>{isHeavy ? "⚠️" : isMedium ? "⏳" : "✓"}</span>
+          <span className="flex-1 leading-relaxed">
+            {isHeavy && (
+              <>
+                <b>Heavy workload.</b> Estimated ~{Math.round(estimatedSeconds / 60)} min on HF free
+                CPU — may time out. Recommend running locally:{" "}
+                <code className="mono">python main.py --tickers {tickersRaw.replace(/\s+/g, "")} --samples {samples} --pred_len {predLen}</code>
+              </>
+            )}
+            {isMedium && (
+              <>
+                <b>Medium workload.</b> Estimated ~{Math.round(estimatedSeconds / 60)} min on HF free
+                CPU. Fine for the web, but local CLI is much faster.
+              </>
+            )}
+            {!isHeavy && !isMedium && (
+              <>
+                <b>Light workload.</b> Estimated ~{estimatedSeconds < 60 ? `${estimatedSeconds}s` : `${Math.round(estimatedSeconds / 60)} min`} on HF free CPU.
+              </>
+            )}
           </span>
         </div>
       )}

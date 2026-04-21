@@ -296,6 +296,73 @@ export default function AboutPage() {
       </section>
 
       <section className="mb-10">
+        <h2 className="text-xl font-semibold mb-3">Cloud vs. Local: two ways to run</h2>
+        <p className="mb-4 leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+          Kronos Filter has two execution paths. Both save to the same Supabase database, so your
+          history and backtest accuracy accumulate regardless of which you use.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div
+            className="p-5 rounded-xl"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+          >
+            <div
+              className="text-xs mb-2 mono uppercase tracking-wider"
+              style={{ color: "var(--accent)" }}
+            >
+              Web (HF Spaces)
+            </div>
+            <h3 className="font-semibold mb-2">Quick check from anywhere</h3>
+            <ul className="space-y-1.5 text-sm" style={{ color: "var(--text-secondary)" }}>
+              <li>◆ Zero setup — just click Predict</li>
+              <li>◆ Shared HF free CPU</li>
+              <li>◆ Best for 1–3 tickers × ≤15 samples</li>
+              <li>◆ Heavy requests (&gt;5 min) will time out</li>
+              <li>◆ Cold start ~30s after idle</li>
+            </ul>
+          </div>
+          <div
+            className="p-5 rounded-xl"
+            style={{ background: "var(--bg-card)", border: "1px solid var(--border)" }}
+          >
+            <div
+              className="text-xs mb-2 mono uppercase tracking-wider"
+              style={{ color: "var(--accent-alt)" }}
+            >
+              Local CLI
+            </div>
+            <h3 className="font-semibold mb-2">Heavy analysis on your machine</h3>
+            <ul className="space-y-1.5 text-sm" style={{ color: "var(--text-secondary)" }}>
+              <li>◆ Runs on your CPU (or GPU if configured)</li>
+              <li>◆ No limits on size — scan 50+ tickers</li>
+              <li>◆ Model loaded in RAM between runs</li>
+              <li>◆ Same code, same model, same results</li>
+              <li>
+                ◆ Run:{" "}
+                <code className="mono text-xs" style={{ color: "var(--accent)" }}>
+                  python main.py --tickers ...
+                </code>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <p className="mt-4 text-sm" style={{ color: "var(--text-muted)" }}>
+          Need faster cloud? Subscribe to{" "}
+          <a
+            href="https://huggingface.co/subscribe/pro"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--accent)" }}
+            className="underline"
+          >
+            HF Pro
+          </a>{" "}
+          ($9/month) — unlocks ZeroGPU A10G (~10x faster). The code is already instrumented for it;
+          just toggle the hardware setting.
+        </p>
+      </section>
+
+      <section className="mb-10">
         <h2 className="text-xl font-semibold mb-3">Why combine with other sources?</h2>
         <p className="leading-relaxed" style={{ color: "var(--text-secondary)" }}>
           Kronos is one perspective. Combined with <b>fundamental analysis</b> (what the business
