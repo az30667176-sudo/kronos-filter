@@ -18,6 +18,11 @@ ENV/
 # Vendor (cloned at setup time via git submodule)
 vendor/
 
+# Secrets
+.env
+.env.local
+.env.*.local
+
 # Outputs: PNG charts and CSV stay local only
 output/*
 !output/.gitkeep

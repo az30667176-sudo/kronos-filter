@@ -61,6 +61,7 @@ def parse_args():
     p.add_argument("--top_p", type=float, default=0.9, help="Nucleus sampling probability")
     p.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
     p.add_argument("--no-charts", action="store_true", help="Skip fan chart generation")
+    p.add_argument("--no-sync", action="store_true", help="Skip Supabase sync")
     return p.parse_args()
 
 
@@ -217,6 +218,26 @@ def main() -> int:
                 plt.close(fig)
             except Exception as exc:
                 logger.warning(f"[{td.ticker}] chart failed: {exc}")
+
+    # Step 8: Sync to Supabase (so /history and /backtest on the website see this run)
+    if not args.no_sync:
+        try:
+            import subprocess
+            sync_script = ROOT / "scripts" / "sync_to_supabase.py"
+            if sync_script.exists():
+                result = subprocess.run(
+                    [sys.executable, str(sync_script), str(latest_path)],
+                    cwd=str(ROOT),
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                if result.returncode == 0:
+                    logger.info("Supabase sync OK")
+                else:
+                    logger.warning(f"Supabase sync non-zero exit: {result.stderr[-200:]}")
+        except Exception as exc:
+            logger.warning(f"Supabase sync failed (local files still saved): {exc}")
 
     logger.info("Done.")
     return 0
